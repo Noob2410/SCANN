@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Scanner PRO</title>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<link rel="manifest" href="manifest.json">
+
+<style>
+body { margin:0; font-family:Arial; display:flex; height:100vh; }
+.left,.right{width:50%;padding:10px;display:flex;flex-direction:column;}
+.left{background:#f3f3f3;}
+
+textarea{width:100%;flex:1;margin-top:10px;}
+input{width:100%;padding:12px;font-size:18px;margin-top:5px;}
+
+.flash-green{background:#7CFC00;}
+.flash-red{background:#ff4d4d;}
+
+ul{list-style:none;padding:0;max-height:60%;overflow:auto;}
+li{padding:5px;border-bottom:1px solid #ddd;}
+.found{background:#7CFC00;}
+
+.fileBox{margin-top:auto;}
+button{padding:10px;margin-top:10px;}
+</style>
+</head>
+
+<body>
+
+<div class="left">
+<input id="leftInput" placeholder="Добавить ID (Enter)">
+<textarea id="numbers"></textarea>
+
+<div class="fileBox">
+<input type="file" id="fileInput" accept=".xlsx,.xls,.ods,.csv">
+</div>
+</div>
+
+<div class="right">
+<input id="inputNumber" placeholder="Сканируй...">
+<div>Найдено: <span id="foundCount">0</span> / <span id="totalCount">0</span></div>
+<ul id="foundList"></ul>
+</div>
+
+<script>
+let numbersSet=new Set(),foundSet=new Set();
+
+const t=document.getElementById('numbers');
+const i=document.getElementById('inputNumber');
+const leftInput=document.getElementById('leftInput');
+const list=document.getElementById('foundList');
+
+// ===== ЗВУК =====
+const ctx=new(window.AudioContext||window.webkitAudioContext)();
+function ok(){let o=ctx.createOscillator();o.frequency.value=1000;o.connect(ctx.destination);o.start();setTimeout(()=>o.stop(),100);}
+function err(){let o=ctx.createOscillator();o.frequency.value=300;o.connect(ctx.destination);o.start();setTimeout(()=>o.stop(),200);}
+
+// ===== НОРМАЛИЗАЦИЯ =====
+function normalize(text){
+ return [...new Set(text.split(/\n+/).map(x=>x.trim()).filter(Boolean))];
+}
+
+function update(){
+ const arr=normalize(t.value);
+ numbersSet=new Set(arr.filter(x=>!foundSet.has(x)));
+ t.value=[...numbersSet].join("\n");
+}
+
+// ===== ВВОД СЛЕВА =====
+leftInput.addEventListener('keypress',e=>{
+ if(e.key==='Enter'){
+  const v=leftInput.value.trim();
+  leftInput.value='';
+  if(!v)return;
+  if(!numbersSet.has(v)&&!foundSet.has(v)){
+    numbersSet.add(v);
+    update(); save();
+  }
+ }
+});
+
+t.addEventListener('input',()=>{update();save();});
+
+// ===== EXCEL =====
+document.getElementById('fileInput').onchange=e=>{
+ let r=new FileReader();
+ r.onload=ev=>{
+  let wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'});
+  let rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1});
+  let vals=[];
+  rows.forEach(r=>r.forEach(c=>c&&vals.push(String(c).trim())));
+  t.value=vals.join("\n");
+  update(); save();
+ };
+ r.readAsArrayBuffer(e.target.files[0]);
+};
+
+// ===== СКАН =====
+i.addEventListener('keypress',e=>{
+ if(e.key==='Enter'){
+  let v=i.value.trim(); i.value='';
+  if(!v)return;
+
+  if(foundSet.has(v)){flash('red');err();return;}
+
+  if(numbersSet.has(v)){
+    foundSet.add(v);
+    numbersSet.delete(v);
+    add(v);
+    update();
+    flash('green'); ok();
+  }else{flash('red'); err();}
+
+  counters(); save();
+ }
+});
+
+function add(v){
+ let li=document.createElement('li');
+ li.textContent=v;
+ li.classList.add('found');
+ list.prepend(li);
+}
+
+function counters(){
+ document.getElementById('foundCount').textContent=foundSet.size;
+ document.getElementById('totalCount').textContent=numbersSet.size+foundSet.size;
+}
+
+function flash(c){
+ i.classList.remove('flash-green','flash-red');
+ i.classList.add(c==='green'?'flash-green':'flash-red');
+ setTimeout(()=>i.classList.remove('flash-green','flash-red'),200);
+}
+
+// ===== СОХРАНЕНИЕ =====
+function save(){
+ localStorage.setItem('n',t.value);
+ localStorage.setItem('f',JSON.stringify([...foundSet]));
+}
+
+function load(){
+ let n=localStorage.getItem('n');
+ let f=JSON.parse(localStorage.getItem('f')||"[]");
+ if(n){t.value=n;}
+ f.forEach(v=>{foundSet.add(v);add(v);});
+ update(); counters();
+}
+
+// ===== УМНЫЙ ФОКУС =====
+let lastActivity=Date.now();
+
+document.addEventListener('click',()=>lastActivity=Date.now());
+document.addEventListener('keydown',()=>lastActivity=Date.now());
+
+setInterval(()=>{
+ const active=document.activeElement;
+ const typingLeft=(active===leftInput||active===t);
+ const idle=(Date.now()-lastActivity>5000);
+ if(idle&&!typingLeft){i.focus();}
+},1000);
+
+// ===== SERVICE WORKER + ОБНОВЛЕНИЕ =====
+if('serviceWorker'in navigator){
+ navigator.serviceWorker.register('sw.js').then(reg=>{
+  if(reg.waiting) showUpdate(reg);
+
+  reg.addEventListener('updatefound',()=>{
+    const nw=reg.installing;
+    nw.addEventListener('statechange',()=>{
+      if(nw.state==='installed' && navigator.serviceWorker.controller){
+        showUpdate(reg);
+      }
+    });
+  });
+ });
+}
+
+function showUpdate(reg){
+ const b=document.createElement('button');
+ b.textContent="Обновить";
+ b.onclick=()=>{
+   reg.waiting.postMessage({type:"SKIP_WAITING"});
+ };
+ document.body.appendChild(b);
+}
+
+navigator.serviceWorker.addEventListener('controllerchange',()=>{
+ location.reload();
+});
+
+load();
+</script>
+
+</body>
+</html>
