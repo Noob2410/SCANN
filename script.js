@@ -13,11 +13,16 @@ const downloadLogBtn = document.getElementById("downloadLogBtn");
 const clearBtn = document.getElementById("clearBtn");
 const fullscreenBtn = document.getElementById("fullscreenBtn");
 
+const STORAGE_KEY = "qr_checker_v8_state";
+
 let targets = [];
+let targetSet = new Set();
 let found = [];
+let foundSet = new Set();
 let logs = [];
 let totalLoaded = 0;
 let focusTimer = null;
+let saveTimer = null;
 
 function nowString() {
   return new Date().toLocaleString("ru-RU");
@@ -29,11 +34,11 @@ function normalizeNumber(value) {
   let text = String(value).trim();
   if (!text) return "";
 
+  // Формат QR: $1:1:4947075447:172583
   const qrMatch = text.match(/\$1:1:(\d+):/);
   if (qrMatch) return qrMatch[1];
 
   text = text.replace(/\s+/g, "");
-
   const plainMatch = text.match(/\d+/);
   return plainMatch ? plainMatch[0] : "";
 }
@@ -45,28 +50,104 @@ function splitNumbers(text) {
     .filter(Boolean);
 }
 
+function rebuildSets() {
+  targetSet = new Set(targets);
+  foundSet = new Set(found);
+}
+
 function addLog(status, number, raw = "") {
   const line = `[${nowString()}] ${status}: ${number}${raw && raw !== number ? ` | RAW: ${raw}` : ""}`;
   logs.unshift(line);
+
+  // Чтобы браузер не раздувался от огромного лога.
+  if (logs.length > 3000) logs.length = 3000;
+}
+
+function saveStateSoon() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveState, 250);
+}
+
+function saveState() {
+  try {
+    const state = {
+      targets,
+      found,
+      logs,
+      totalLoaded,
+      fileName: fileName.textContent
+    };
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.warn("Не получилось сохранить прогресс:", error);
+  }
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+
+    const state = JSON.parse(raw);
+
+    targets = Array.isArray(state.targets) ? state.targets.map(normalizeNumber).filter(Boolean) : [];
+    found = Array.isArray(state.found) ? state.found.map(normalizeNumber).filter(Boolean) : [];
+    logs = Array.isArray(state.logs) ? state.logs : [];
+    totalLoaded = Number.isFinite(state.totalLoaded) ? state.totalLoaded : targets.length + found.length;
+
+    if (state.fileName) fileName.textContent = state.fileName;
+
+    // На всякий случай чистим дубли из сохраненного состояния.
+    targets = [...new Set(targets)];
+    found = [...new Set(found)];
+    rebuildSets();
+  } catch (error) {
+    console.warn("Не получилось восстановить прогресс:", error);
+  }
 }
 
 function addTargets(numbers) {
   const clean = numbers.map(normalizeNumber).filter(Boolean);
   if (!clean.length) return;
 
-  targets.push(...clean);
-  totalLoaded += clean.length;
+  const uniqueToAdd = [];
+  const duplicates = [];
 
-  clean.forEach((num) => addLog("ЗАГРУЖЕНО", num));
+  clean.forEach((num) => {
+    if (targetSet.has(num) || foundSet.has(num)) {
+      duplicates.push(num);
+      return;
+    }
+
+    targetSet.add(num);
+    uniqueToAdd.push(num);
+  });
+
+  if (uniqueToAdd.length) {
+    targets.push(...uniqueToAdd);
+    totalLoaded += uniqueToAdd.length;
+    uniqueToAdd.forEach((num) => addLog("ЗАГРУЖЕНО", num));
+  }
+
+  duplicates.forEach((num) => addLog("ДУБЛЬ ПРОПУЩЕН", num));
+
   render();
+  saveStateSoon();
 }
 
 function removeOneTarget(number) {
+  if (!targetSet.has(number)) return false;
+
   const index = targets.indexOf(number);
   if (index === -1) return false;
 
   targets.splice(index, 1);
+  targetSet.delete(number);
+
   found.push(number);
+  foundSet.add(number);
+
   return true;
 }
 
@@ -74,7 +155,6 @@ function render() {
   targetList.value = targets.join("\n");
   foundList.value = found.map((num) => `НАЙДЕНО: ${num}`).join("\n");
   logList.value = logs.join("\n");
-
   counter.textContent = `Найдено: ${found.length} / ${totalLoaded} | Осталось: ${targets.length}`;
 }
 
@@ -87,20 +167,33 @@ function flash(status) {
   }, 650);
 }
 
-function beep(type) {
+let sharedAudio = null;
+
+function getAudioContext() {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextClass) return;
+  if (!AudioContextClass) return null;
 
-  const audio = new AudioContextClass();
+  if (!sharedAudio) sharedAudio = new AudioContextClass();
 
-  function tone(freq, start, duration, volume = 0.2) {
+  if (sharedAudio.state === "suspended") {
+    sharedAudio.resume();
+  }
+
+  return sharedAudio;
+}
+
+function beep(type) {
+  const audio = getAudioContext();
+  if (!audio) return;
+
+  function tone(freq, start, duration, volume = 0.55) {
     const oscillator = audio.createOscillator();
     const gain = audio.createGain();
 
     oscillator.connect(gain);
     gain.connect(audio.destination);
 
-    oscillator.type = "sine";
+    oscillator.type = "square";
     oscillator.frequency.setValueAtTime(freq, audio.currentTime + start);
 
     gain.gain.setValueAtTime(volume, audio.currentTime + start);
@@ -111,11 +204,11 @@ function beep(type) {
   }
 
   if (type === "good") {
-    tone(880, 0, 0.10, 0.22);
-    tone(1180, 0.12, 0.10, 0.22);
+    tone(950, 0, 0.11, 0.60);
+    tone(1250, 0.13, 0.11, 0.60);
   } else {
-    tone(180, 0, 0.28, 0.25);
-    tone(140, 0.12, 0.28, 0.18);
+    tone(220, 0, 0.32, 0.70);
+    tone(160, 0.18, 0.34, 0.55);
   }
 }
 
@@ -136,18 +229,24 @@ function handleScan(rawValue) {
     flash("good");
     beep("good");
   } else {
-    addLog("НЕ НАЙДЕНО", number, raw);
+    if (foundSet.has(number)) {
+      addLog("УЖЕ БЫЛ НАЙДЕН", number, raw);
+    } else {
+      addLog("НЕ НАЙДЕНО", number, raw);
+    }
+
     flash("bad");
     beep("bad");
   }
 
   render();
+  saveStateSoon();
   scanInput.value = "";
   keepScannerFocus();
 }
 
 function keepScannerFocus() {
-  if (document.activeElement !== manualInput) {
+  if (document.activeElement !== manualInput && document.activeElement !== logList) {
     scanInput.focus();
   }
 }
@@ -177,18 +276,16 @@ manualInput.addEventListener("focus", scheduleScannerFocusAfterManualInput);
 manualInput.addEventListener("click", scheduleScannerFocusAfterManualInput);
 manualInput.addEventListener("keydown", scheduleScannerFocusAfterManualInput);
 
-// Поле 4 адаптировано под сканер:
-// сканер вводит номер/QR и сам нажимает Enter — проверка запускается сразу по Enter.
-// При ручном вводе ничего автоматически не срабатывает.
-// Для ручной проверки можно нажать кнопку "Проверить".
+// Поле 4:
+// - сканер вводит номер/QR и сам нажимает Enter;
+// - ручной ввод тоже проверяется только после нажатия Enter;
+// - автообработки без Enter нет.
 scanInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
     handleScan(scanInput.value);
   }
 });
-
-
 
 fileInput.addEventListener("change", async (event) => {
   const file = event.target.files[0];
@@ -229,6 +326,7 @@ fileInput.addEventListener("change", async (event) => {
 
   fileInput.value = "";
   render();
+  saveStateSoon();
 });
 
 toggleLogBtn.addEventListener("click", (event) => {
@@ -244,7 +342,7 @@ downloadLogBtn.addEventListener("click", () => {
     "ЛОГ СВЕРКИ QR / ШТРИХКОДОВ",
     `Дата выгрузки: ${nowString()}`,
     "",
-    `Всего загружено: ${totalLoaded}`,
+    `Всего загружено уникальных: ${totalLoaded}`,
     `Найдено: ${found.length}`,
     `Осталось: ${targets.length}`,
     "",
@@ -271,16 +369,22 @@ downloadLogBtn.addEventListener("click", () => {
 });
 
 clearBtn.addEventListener("click", () => {
-  const ok = confirm("Точно очистить все списки и лог?");
+  const ok = confirm("Точно очистить все списки, найденные номера, лог и сохраненный прогресс?");
   if (!ok) return;
 
   targets = [];
+  targetSet = new Set();
   found = [];
+  foundSet = new Set();
   logs = [];
   totalLoaded = 0;
+
   manualInput.value = "";
   scanInput.value = "";
   fileName.textContent = "Файл не выбран";
+
+  localStorage.removeItem(STORAGE_KEY);
+
   render();
   scanInput.focus();
 });
@@ -307,12 +411,15 @@ document.addEventListener("fullscreenchange", () => {
 });
 
 document.addEventListener("click", () => {
-  if (document.activeElement !== manualInput) {
+  if (document.activeElement !== manualInput && document.activeElement !== logList) {
     scanInput.focus();
   }
 });
 
+window.addEventListener("beforeunload", saveState);
+
 window.addEventListener("load", () => {
+  loadState();
   render();
   scanInput.focus();
 });
