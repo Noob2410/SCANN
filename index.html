@@ -4,18 +4,18 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Сверка QR / штрихкодов</title>
-  <link rel="stylesheet" href="style.css?v=8" />
+  <link rel="stylesheet" href="style.css?v=10" />
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
   <main class="app">
     <section class="left">
       <div class="panel input-panel">
-        <textarea id="manualInput" placeholder="Добавить ID: Shift+Enter — новая строка, Enter — добавить"></textarea>
+        <textarea id="manualInput" placeholder="Введи передачу: Shift+Enter — новая строка, Enter — добавить"></textarea>
       </div>
 
       <div class="panel list-panel">
-        <div class="panel-title">2. Осталось найти</div>
+        <div class="panel-title">Список отмененок</div>
         <textarea id="targetList" readonly placeholder="Список для сверки..."></textarea>
       </div>
 
@@ -35,12 +35,12 @@
 
     <section class="right">
       <div id="scanPanel" class="panel scan-panel">
-        <input id="scanInput" type="text" placeholder="Сканируй или введи номер вручную (Enter — проверить)..." autocomplete="off" />
+        <input id="scanInput" type="text" placeholder="Сканируй или введи номер передачи (Enter — проверить)..." autocomplete="off" />
         <div id="counter">Найдено: 0 / 0 | Осталось: 0</div>
       </div>
 
       <div class="panel found-panel">
-        <div class="panel-title">5. Найденные совпадения</div>
+        <div class="panel-title">Отвези на перепечать на принтер!</div>
 
         <textarea id="foundList" readonly placeholder="Здесь появятся найденные номера..."></textarea>
 
@@ -54,6 +54,6 @@
     </section>
   </main>
 
-  <script src="script.js?v=8"></script>
+  <script src="script.js?v=10"></script>
 </body>
 </html>

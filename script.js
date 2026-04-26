@@ -34,7 +34,8 @@ function normalizeNumber(value) {
   let text = String(value).trim();
   if (!text) return "";
 
-  // Формат QR: $1:1:4947075447:172583
+  // Формат QR в сканере или в Excel/LibreOffice:
+  // $1:1:4947075447:172583 -> берем только 4947075447
   const qrMatch = text.match(/\$1:1:(\d+):/);
   if (qrMatch) return qrMatch[1];
 
