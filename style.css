@@ -126,14 +126,12 @@ button {
 
 .scan-panel.good,
 .scan-panel.good input,
-.scan-panel.good button,
 .scan-panel.good #counter {
   background: #62ff00;
 }
 
 .scan-panel.bad,
 .scan-panel.bad input,
-.scan-panel.bad button,
 .scan-panel.bad #counter {
   background: #ff3131;
 }

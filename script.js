@@ -13,7 +13,7 @@ const downloadLogBtn = document.getElementById("downloadLogBtn");
 const clearBtn = document.getElementById("clearBtn");
 const fullscreenBtn = document.getElementById("fullscreenBtn");
 
-const STORAGE_KEY = "qr_checker_v8_state";
+const STORAGE_KEY = "qr_checker_v11_state";
 
 let targets = [];
 let targetSet = new Set();
@@ -34,9 +34,11 @@ function normalizeNumber(value) {
   let text = String(value).trim();
   if (!text) return "";
 
-  // Формат QR в сканере или в Excel/LibreOffice:
-  // $1:1:4947075447:172583 -> берем только 4947075447
-  const qrMatch = text.match(/\$1:1:(\d+):/);
+  // QR из сканера/Excel:
+  // $1:1:4947075447:172583 -> 4947075447
+  // При русской раскладке ":" часто приходит как "Ж":
+  // $1Ж1Ж4947075447Ж172583 -> 4947075447
+  const qrMatch = text.match(/\$1[:Жж]1[:Жж](\d+)[:Жж]/);
   if (qrMatch) return qrMatch[1];
 
   text = text.replace(/\s+/g, "");
@@ -59,8 +61,6 @@ function rebuildSets() {
 function addLog(status, number, raw = "") {
   const line = `[${nowString()}] ${status}: ${number}${raw && raw !== number ? ` | RAW: ${raw}` : ""}`;
   logs.unshift(line);
-
-  // Чтобы браузер не раздувался от огромного лога.
   if (logs.length > 3000) logs.length = 3000;
 }
 
@@ -71,15 +71,13 @@ function saveStateSoon() {
 
 function saveState() {
   try {
-    const state = {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
       targets,
       found,
       logs,
       totalLoaded,
       fileName: fileName.textContent
-    };
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }));
   } catch (error) {
     console.warn("Не получилось сохранить прогресс:", error);
   }
@@ -99,7 +97,6 @@ function loadState() {
 
     if (state.fileName) fileName.textContent = state.fileName;
 
-    // На всякий случай чистим дубли из сохраненного состояния.
     targets = [...new Set(targets)];
     found = [...new Set(found)];
     rebuildSets();
@@ -163,9 +160,10 @@ function flash(status) {
   scanPanel.classList.remove("good", "bad");
   scanPanel.classList.add(status);
 
+  // Быстрее визуализация: поле не "залипает", но цвет всё равно видно.
   setTimeout(() => {
     scanPanel.classList.remove("good", "bad");
-  }, 650);
+  }, 320);
 }
 
 let sharedAudio = null;
@@ -217,9 +215,11 @@ function handleScan(rawValue) {
   const raw = String(rawValue || "").trim();
   const number = normalizeNumber(raw);
 
+  // Сразу очищаем поле и возвращаем фокус — так сканер быстрее готов к следующему QR.
+  scanInput.value = "";
+  keepScannerFocus();
+
   if (!number) {
-    scanInput.value = "";
-    keepScannerFocus();
     return;
   }
 
@@ -240,10 +240,12 @@ function handleScan(rawValue) {
     beep("bad");
   }
 
-  render();
-  saveStateSoon();
-  scanInput.value = "";
-  keepScannerFocus();
+  // Рисуем результат отдельным кадром, чтобы ввод сканера не ощущался тяжелым.
+  requestAnimationFrame(() => {
+    render();
+    saveStateSoon();
+    keepScannerFocus();
+  });
 }
 
 function keepScannerFocus() {
@@ -279,7 +281,7 @@ manualInput.addEventListener("keydown", scheduleScannerFocusAfterManualInput);
 
 // Поле 4:
 // - сканер вводит номер/QR и сам нажимает Enter;
-// - ручной ввод тоже проверяется только после нажатия Enter;
+// - ручной ввод тоже проверяется только после Enter;
 // - автообработки без Enter нет.
 scanInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
